@@ -7,14 +7,15 @@ class Controller:
     piezo controller. Many more commands are available and have not been
     implemented.
     '''
-    def __init__(self, which_port, verbose=True):
+    def __init__(self, which_port, name='MDT694B', verbose=True):
+        self.name = name
         self.verbose = verbose
-        if self.verbose: print('Opening MDT694B controller...', end='')
+        if self.verbose: print('%s: opening...'%self.name, end='')
         try:
             self.port = serial.Serial(port=which_port, baudrate=115200)
         except serial.serialutil.SerialException:
             raise IOError(
-                'No connection to MDT694B controller on port %s'%which_port)
+                '%s: no connection on port %s'%(self.name, which_port))
         response = self._send(b'restore\n', response_bytes=51) # reset
         assert response == (
             b'restore\n*All settings restored to default values.\r*')
@@ -25,7 +26,7 @@ class Controller:
         assert vlimit in voltage_limits
         self.voltage_limit = vlimit
         if self.verbose:
-            print('Voltage limit setting = %iv'%vlimit)
+            print('%s: voltage limit setting = %iv'%(self.name, vlimit))
             self.get_voltage()
         self._pending_cmd = None
 
@@ -41,7 +42,7 @@ class Controller:
     def _finish_set_voltage(self, polling_wait_s=0.2):
         if self._pending_cmd is None:
             return
-        if self.verbose: print('...', end='')
+        if self.verbose: print('%s: ...'%self.name, end='')
         while True:
             initial_voltage = self.get_voltage(verbose=False)
             if self.verbose: print('.', end='')
@@ -50,7 +51,7 @@ class Controller:
             if initial_voltage == final_voltage:
                 break
         if self.verbose:
-            print('voltage settled at %0.2fv'%final_voltage)
+            print('\n%s: voltage settled at %0.2fv'%(self.name, final_voltage))
         self._pending_cmd = None
         return final_voltage
 
@@ -58,17 +59,17 @@ class Controller:
         response = self._send(b'xvoltage?\n', response_bytes=20)
         voltage = float(response.decode('ascii')[-8:-2])
         if verbose:
-            print('MDT694B controller voltage = %0.2fv'%voltage)
+            print('%s: voltage = %0.2fv'%(self.name, voltage))
         return voltage
 
     def set_voltage(self, voltage, block=True):
         if self._pending_cmd is not None:
             self._finish_set_voltage()
         if self.verbose:
-            print('Setting MDT694B controller to: %0.2fv'%voltage)
+            print('%s: setting to: %0.2fv'%(self.name, voltage))
         target_voltage = float(voltage)
         assert 0 <= target_voltage <= self.voltage_limit, (
-            'requested voltage out of range')
+            '%s: requested voltage out of range'%self.name)
         cmd = ('xvoltage=%0.2f\n'%target_voltage).encode('ascii')
         self._send(cmd, response_bytes=len(cmd) + 1) # echo
         self._pending_cmd = cmd
@@ -77,7 +78,7 @@ class Controller:
         return None
 
     def close(self):
-        if self.verbose: print("Closing MDT694B controller...", end='')
+        if self.verbose: print("%s: closing..."%self.name, end='')
         self.port.close()
         if self.verbose: print(" done.")
         return None
@@ -85,23 +86,23 @@ class Controller:
 if __name__ == '__main__':
     start = time.perf_counter()
     piezo = Controller('COM7')
-    print('(initialze time: %0.4fs)\n'%(time.perf_counter() - start))
+    print('(initialze time: %0.4fs)'%(time.perf_counter() - start))
    
-    print('Set voltage call: regular')
+    print('\nSet voltage call: regular')
     start = time.perf_counter()
     piezo.set_voltage(0)
-    print('(time: %0.4fs)\n'%(time.perf_counter() - start))
+    print('(time: %0.4fs)'%(time.perf_counter() - start))
 
-    print('Set voltage call: non-blocking + finish')
+    print('\nSet voltage call: non-blocking + finish')
     start = time.perf_counter()
     piezo.set_voltage(0, block=False)
     print('(non-blocking time: %0.4fs)'%(
         time.perf_counter() - start))
     piezo._finish_set_voltage()
-    print('(non-blocking + finish time: %0.4fs)\n'%(
+    print('(non-blocking + finish time: %0.4fs)'%(
         time.perf_counter() - start))
 
-    print('Set voltage: Non-blocking + forget to finish, then finish!')
+    print('\nSet voltage: Non-blocking + forget to finish, then finish!')
     piezo.set_voltage(0, block=False)
     piezo.set_voltage(piezo.voltage_limit, block=False)
     piezo._finish_set_voltage(polling_wait_s=0.25) # adjust polling time
