@@ -25,10 +25,11 @@ class Controller:
         vlimit = int(response.decode('ascii')[-6:-2])
         assert vlimit in voltage_limits
         self.voltage_limit = vlimit
+        self.voltage = self.get_voltage(verbose=False)
+        self._pending_cmd = None
         if self.verbose:
             print('%s: voltage limit setting = %iv'%(self.name, vlimit))
-            self.get_voltage()
-        self._pending_cmd = None
+            print('%s: voltage = %iv'%(self.name, self.voltage))
 
     def _send(self, cmd, response_bytes=None):
         self.port.write(cmd)
@@ -49,18 +50,19 @@ class Controller:
             time.sleep(polling_wait_s)
             final_voltage = self.get_voltage(verbose=False)
             if initial_voltage == final_voltage:
+                self.voltage = final_voltage
                 break
         if self.verbose:
-            print('\n%s: voltage settled at %0.2fv'%(self.name, final_voltage))
+            print('\n%s: voltage settled at %0.2fv'%(self.name, self.voltage))
         self._pending_cmd = None
-        return final_voltage
+        return None
 
     def get_voltage(self, verbose=True):
         response = self._send(b'xvoltage?\n', response_bytes=20)
-        voltage = float(response.decode('ascii')[-8:-2])
+        self.voltage = float(response.decode('ascii')[-8:-2])
         if verbose:
-            print('%s: voltage = %0.2fv'%(self.name, voltage))
-        return voltage
+            print('%s: voltage = %0.2fv'%(self.name, self.voltage))
+        return self.voltage
 
     def set_voltage(self, voltage, block=True):
         if self._pending_cmd is not None:
@@ -112,6 +114,14 @@ if __name__ == '__main__':
     for moves in range(5):
         random_voltage = randrange(0, piezo.voltage_limit)
         piezo.set_voltage(random_voltage)
+    piezo.set_voltage(0)
+
+    print('\nSome random moves - no waiting for settle!:')
+    from random import randrange
+    for moves in range(5):
+        random_voltage = randrange(0, 10)
+        piezo.set_voltage(random_voltage, block=False)
+        piezo._pending_cmd = None
     piezo.set_voltage(0)
 
     piezo.close()
