@@ -7,38 +7,54 @@ class Controller:
     piezo controller. Many more commands are available and have not been
     implemented.
     '''
-    def __init__(self, which_port, name='MDT694B', verbose=True):
+    def __init__(
+        self, which_port, name='MDT694B', verbose=True, very_verbose=False):
         self.name = name
         self.verbose = verbose
+        self.very_verbose = very_verbose
         if self.verbose: print('%s: opening...'%self.name, end='')
         try:
             self.port = serial.Serial(port=which_port, baudrate=115200)
         except serial.serialutil.SerialException:
             raise IOError(
                 '%s: no connection on port %s'%(self.name, which_port))
-        response = self._send(b'restore\n', response_bytes=51) # reset
-        assert response == (
-            b'restore\n*All settings restored to default values.\r*')
+        assert self._send('restore')[0] == (
+            'All settings restored to default values.')
+        self.id = self._send('id?')
+        assert self.id[0] == 'Model MDT694B Piezo Control Module'
+        assert self.id[1] == 'Firmware Version: 1.10'
         if self.verbose: print(" done.")
         voltage_limits = (75, 100, 150)
-        response = self._send(b'vlimit?\n', response_bytes=16) # check limits
-        vlimit = int(response.decode('ascii')[-6:-2])
-        assert vlimit in voltage_limits
-        self.voltage_limit = vlimit
-        self.voltage = self.get_voltage(verbose=False)
+        self.voltage_limit = int(self._send('vlimit?', remove_brackets=True)[0])
+        assert self.voltage_limit in voltage_limits
+        self.get_voltage(verbose=False)
         self._pending_cmd = None
         if self.verbose:
-            print('%s: voltage limit setting = %iv'%(self.name, vlimit))
+            for line in self.id:
+                print('%s: id = %s'%(self.name, line))
+            print('%s: voltage limit setting = %iv'%(
+                self.name, self.voltage_limit))
             print('%s: voltage = %iv'%(self.name, self.voltage))
 
-    def _send(self, cmd, response_bytes=None):
-        self.port.write(cmd)
-        if response_bytes is not None:
-            response = self.port.read(response_bytes)
-        else:
-            response = None
+    def _send(self, cmd, remove_brackets=False):
+        if self.very_verbose:
+            print("\n%s: sending cmd = '%s'"%(self.name, cmd))
+        self.port.write(bytes(cmd + '\n', encoding='ascii'))
+        response = self.port.read_until(b'>').decode('ascii').rstrip('>')
         assert self.port.inWaiting() == 0
-        return response
+        assert response.split('\n')[0] == cmd   # check echo
+        response = response.split('\n')[1]      # remove echo
+        response = response.split('\r')         # split up lines
+        responses = []
+        for r in response:
+            if r!= '':                          # remove empty lines
+                if remove_brackets:
+                    r = r.replace('[','').replace(']','')
+                responses.append(r)
+        if self.very_verbose:
+            for r in responses:
+                    print("%s:  response  = "%self.name, r)
+        return responses
 
     def _finish_set_voltage(self, polling_wait_s=0.2):
         if self._pending_cmd is None:
@@ -58,8 +74,7 @@ class Controller:
         return None
 
     def get_voltage(self, verbose=True):
-        response = self._send(b'xvoltage?\n', response_bytes=20)
-        self.voltage = float(response.decode('ascii')[-8:-2])
+        self.voltage = float(self._send('xvoltage?', remove_brackets=True)[0])
         if verbose:
             print('%s: voltage = %0.2fv'%(self.name, self.voltage))
         return self.voltage
@@ -72,8 +87,8 @@ class Controller:
         target_voltage = float(voltage)
         assert 0 <= target_voltage <= self.voltage_limit, (
             '%s: requested voltage out of range'%self.name)
-        cmd = ('xvoltage=%0.2f\n'%target_voltage).encode('ascii')
-        self._send(cmd, response_bytes=len(cmd) + 1) # echo
+        cmd = 'xvoltage=%0.2f'%target_voltage
+        self._send(cmd)
         self._pending_cmd = cmd
         if block:
             self._finish_set_voltage()
@@ -87,9 +102,11 @@ class Controller:
 
 if __name__ == '__main__':
     start = time.perf_counter()
-    piezo = Controller('COM7')
+    piezo = Controller('COM7', verbose=True, very_verbose=False)
     print('(initialze time: %0.4fs)'%(time.perf_counter() - start))
-   
+
+##    piezo._send('?')
+
     print('\nSet voltage call: regular')
     start = time.perf_counter()
     piezo.set_voltage(0)
